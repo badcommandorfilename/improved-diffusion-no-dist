@@ -4,7 +4,7 @@ Train a diffusion model on images.
 
 import argparse
 
-from improved_diffusion import dist_util, logger
+from improved_diffusion import logger
 from improved_diffusion.image_datasets import load_data
 from improved_diffusion.resample import create_named_schedule_sampler
 from improved_diffusion.script_util import (
@@ -14,19 +14,22 @@ from improved_diffusion.script_util import (
     add_dict_to_argparser,
 )
 from improved_diffusion.train_util import TrainLoop
-
+import torch as th
 
 def main():
     args = create_argparser().parse_args()
 
-    dist_util.setup_dist()
     logger.configure()
 
     logger.log("creating model and diffusion...")
     model, diffusion = create_model_and_diffusion(
         **args_to_dict(args, model_and_diffusion_defaults().keys())
     )
-    model.to(dist_util.dev())
+    
+    model.load_state_dict(
+        th.load(args.model_path)
+    )
+    
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
     logger.log("creating data loader...")
@@ -54,6 +57,7 @@ def main():
         schedule_sampler=schedule_sampler,
         weight_decay=args.weight_decay,
         lr_anneal_steps=args.lr_anneal_steps,
+        args=args,
     ).run_loop()
 
 
