@@ -5,10 +5,9 @@ import os
 import blobfile as bf
 import numpy as np
 import torch as th
-from torch.nn.parallel.distributed import DistributedDataParallel as DDP
 from torch.optim import AdamW
 
-from . import dist_util, logger
+from . import logger
 from .fp16_util import (
     make_master_params,
     master_params_to_model_params,
@@ -69,7 +68,10 @@ class TrainLoop:
 
         self.step = 0
         self.resume_step = 0
-        self.global_batch = self.batch_size * dist.get_world_size()
+
+        self.global_batch = self.batch_size * 1#dist.get_world_size()        #just use 1 cpu/gpu
+
+        self.opt = AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
 
         self.model_params = list(self.model.parameters())
         self.master_params = self.model_params
@@ -80,7 +82,8 @@ class TrainLoop:
         if self.use_fp16:
             self._setup_fp16()
 
-        self.opt = AdamW(self.master_params, lr=self.lr, weight_decay=self.weight_decay)
+        
+        
         if self.resume_step:
             self._load_optimizer_state()
             # Model was resumed, either due to a restart or a checkpoint
@@ -103,10 +106,9 @@ class TrainLoop:
         if resume_checkpoint:
             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
             logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
+    
             self.model.load_state_dict(
-                dist_util.load_state_dict(
-                    resume_checkpoint, map_location=dist_util.dev()
-                )
+                th.load(resume_checkpoint)
             )
 
     def _load_ema_parameters(self, rate):
@@ -116,9 +118,7 @@ class TrainLoop:
         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
         if ema_checkpoint:
             logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
-            state_dict = dist_util.load_state_dict(
-                ema_checkpoint, map_location=dist_util.dev()
-            )
+            state_dict = th.load(ema_checkpoint)
             ema_params = self._state_dict_to_master_params(state_dict)
 
         return ema_params
@@ -130,9 +130,7 @@ class TrainLoop:
         )
         if bf.exists(opt_checkpoint):
             logger.log(f"loading optimizer state from checkpoint: {opt_checkpoint}")
-            state_dict = dist_util.load_state_dict(
-                opt_checkpoint, map_location=dist_util.dev()
-            )
+            state_dict = th.load(opt_checkpoint)
             self.opt.load_state_dict(state_dict)
 
     def _setup_fp16(self):
@@ -169,9 +167,9 @@ class TrainLoop:
     def forward_backward(self, batch, cond):
         zero_grad(self.model_params)
         for i in range(0, batch.shape[0], self.microbatch):
-            micro = batch[i : i + self.microbatch].to(model.device)
+            micro = batch[i : i + self.microbatch].to(batch.device)
             micro_cond = {
-                k: v[i : i + self.microbatch].to(model.device)
+                k: v[i : i + self.microbatch].to(batch.device)
                 for k, v in cond.items()
             }
             last_batch = (i + self.microbatch) >= batch.shape[0]
@@ -232,7 +230,7 @@ class TrainLoop:
     def _log_grad_norm(self):
         sqsum = 0.0
         for p in self.master_params:
-            sqsum += (p.grad ** 2).sum().item()
+            sqsum += 0 if p.grad is None else (p.grad ** 2).sum().item()
         logger.logkv_mean("grad_norm", np.sqrt(sqsum))
 
     def _anneal_lr(self):

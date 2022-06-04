@@ -26,9 +26,10 @@ def main():
         **args_to_dict(args, model_and_diffusion_defaults().keys())
     )
     
-    model.load_state_dict(
-        th.load(args.model_path)
-    )
+    if args.model_path:
+        model.load_state_dict(
+            th.load(args.model_path)
+        )
     
     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
 
@@ -76,6 +77,7 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        model_path=None
     )
     defaults.update(model_and_diffusion_defaults())
     parser = argparse.ArgumentParser()
