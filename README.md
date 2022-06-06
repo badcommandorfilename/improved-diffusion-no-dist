@@ -1,6 +1,12 @@
-# improved-diffusion
+# improved-diffusion-no-dist
 
-This is the codebase for [Improved Denoising Diffusion Probabilistic Models](https://arxiv.org/abs/2102.09672).
+*Train improved_diffusion without Distributed Data Parallel (DDP)*
+
+This is a FORK of the codebase for [Improved Denoising Diffusion Probabilistic Models](https://arxiv.org/abs/2102.09672).
+
+## Why no DDP??
+If you don't have a multi-GPU setup but still want to train diffusion models, the DDP code causes conflicts with tools like APEX or [DeepSpeed](https://www.deepspeed.ai/) (which have their own DDP tools internally).
+On Windows, MPI and other dist backends are unsupported and have various issues. On a single GPU system, the dist_utils layer has no effect anyway (but will still throw errors).
 
 # Usage
 
