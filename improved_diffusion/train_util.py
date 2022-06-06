@@ -7,6 +7,10 @@ import numpy as np
 import torch as th
 from torch.optim import AdamW
 
+import deepspeed
+from deepspeed.utils.zero_to_fp32 import get_fp32_state_dict_from_zero_checkpoint
+
+
 from . import logger
 from .fp16_util import (
     make_master_params,
@@ -72,7 +76,15 @@ class TrainLoop:
         self.global_batch = self.batch_size * 1#dist.get_world_size()        #just use 1 cpu/gpu
 
         self.opt = AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
-
+        
+        #deepspeed.init_distributed(dist_backend='gloo')
+        model, optim, _, _ = deepspeed.initialize(args=args, model=self.model, model_parameters=self.model.parameters(), optimizer=self.opt)
+        #NB: deepspeed adds .module too
+        
+        deepspeed.checkpointing.configure(None, deepspeed_config=args.deepspeed_config, partition_activations=True)
+        self.model = model
+        self.opt = optim
+   
         self.model_params = list(self.model.parameters())
         self.master_params = self.model_params
         self.lg_loss_scale = INITIAL_LOG_LOSS_SCALE
@@ -143,7 +155,7 @@ class TrainLoop:
             or self.step + self.resume_step < self.lr_anneal_steps
         ):
             batch, cond = next(self.data)
-            self.run_step(batch, cond)
+            self.run_step(batch.cuda(), cond)
             if self.step % self.log_interval == 0:
                 logger.dumpkvs()
             if self.step % self.save_interval == 0:
@@ -202,7 +214,8 @@ class TrainLoop:
                 loss_scale = 2 ** self.lg_loss_scale
                 (loss * loss_scale).backward()
             else:
-                loss.backward()
+                self.model.backward(loss)
+                #loss.backward()
 
     def optimize_fp16(self):
         if any(not th.isfinite(p.grad).all() for p in self.model_params):
@@ -223,13 +236,13 @@ class TrainLoop:
     def optimize_normal(self):
         self._log_grad_norm()
         self._anneal_lr()
-        self.opt.step()
+        #self.opt.step()
+        self.model.step()
         for rate, params in zip(self.ema_rate, self.ema_params):
             update_ema(params, self.master_params, rate=rate)
 
     def _log_grad_norm(self):
         sqsum = 0.0
-        #Sometimes gradients are reset to None instead of 0
         for p in self.master_params:
             sqsum += 0 if p.grad is None else (p.grad ** 2).sum().item()
         logger.logkv_mean("grad_norm", np.sqrt(sqsum))

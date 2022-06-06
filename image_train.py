@@ -16,6 +16,8 @@ from improved_diffusion.script_util import (
 from improved_diffusion.train_util import TrainLoop
 import torch as th
 
+import deepspeed
+
 def main():
     args = create_argparser().parse_args()
 
@@ -73,14 +75,20 @@ def create_argparser():
         microbatch=-1,  # -1 disables microbatches
         ema_rate="0.9999",  # comma-separated list of EMA values
         log_interval=10,
-        save_interval=10000,
+        save_interval=1000,
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
-        model_path=None
+        diffusion_steps=1000,
+        
+        model_path = None
     )
     defaults.update(model_and_diffusion_defaults())
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser()    
+    parser.add_argument('--local_rank', type=int, default=0, help='deepspeed thing')
+    
+    parser = deepspeed.add_config_arguments(parser)
+    
     add_dict_to_argparser(parser, defaults)
     return parser
 
